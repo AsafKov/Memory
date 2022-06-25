@@ -3,4 +3,4 @@ project(Memory)
 
 set(CMAKE_CXX_STANDARD 11)
 
-add_executable(Memory malloc_3.cpp)
+add_executable(Memory main.cpp)
