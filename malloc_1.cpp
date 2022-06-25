@@ -1,6 +1,7 @@
-#include "malloc_1.h"
+#include  <unistd.h>
+#include  <cmath>
 
-void *malloc_1::smalloc(size_t size) {
+void *smalloc(size_t size) {
     if(size == 0 || size > (long) pow(10, 8)) return nullptr;
 
     void *program_break = sbrk((intptr_t) size);
