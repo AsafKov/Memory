@@ -381,24 +381,6 @@ bool extendWilderness(MetaData *block, size_t extend_to){
     return true;
 }
 
-void *sreallocMergeLeft(MetaData *old_block, MetaData *merge_with, size_t size){
-    MetaData *new_block;
-    merge_with->is_free = false;
-    memory_blocks.decreaseFreeBytes(merge_with->size);
-    new_block = (MetaData *) memory_blocks.mergeBlocks(merge_with, old_block);
-    new_block->is_free = false;
-    split(new_block, size);
-    if(!extendWilderness(new_block, size)){
-        return nullptr; //sbrk failure
-    }
-    old_block = new_block;
-    if(old_block->size >= size){
-        memcpy(new_block, old_block, old_block->size);
-        return new_block + sizeof(MetaData);
-    }
-    return old_block;
-}
-
 void *srealloc(void *oldp, size_t size) {
     size = size % 8 != 0? size + (8 - size % 8) : size;
     if(size == 0 || size > (size_t) pow(10, 8)) return nullptr;
@@ -409,7 +391,7 @@ void *srealloc(void *oldp, size_t size) {
         return oldp;
     }
 
-    bool is_wilderness, next_is_wilderness, prev_free, prev_fits, next_free, next_fits, combined_fits, split_result = true;
+    bool is_wilderness, next_is_wilderness, prev_free, prev_fits, next_free, next_fits, combined_fits;
     is_wilderness = old_block->next_by_address == nullptr;
     prev_free = old_block->prev_by_address != nullptr && old_block->prev_by_address->is_free;
     next_free = old_block->next_by_address != nullptr && old_block->next_by_address->is_free;
@@ -422,7 +404,6 @@ void *srealloc(void *oldp, size_t size) {
     MetaData *new_block;
     if(prev_fits || combined_fits || (next_is_wilderness && !next_fits && prev_free)){
         old_block->prev_by_address->is_free = false;
-        split_result = false;
         memory_blocks.decreaseFreeBytes(old_block->prev_by_address->size);
         new_block = (MetaData *) memory_blocks.mergeBlocks(old_block->prev_by_address, old_block);
         new_block->is_free = false;
@@ -449,9 +430,8 @@ void *srealloc(void *oldp, size_t size) {
     if(next_fits || combined_fits || next_is_wilderness){
         memory_blocks.decreaseFreeBytes(old_block->next_by_address->size);
         new_block = (MetaData *) memory_blocks.mergeBlocks(old_block, old_block->next_by_address);
-        if(split_result){
-            split(new_block, size);
-        }
+        split(new_block, size);
+
         if(!extendWilderness(new_block, size)){
             return nullptr; //sbrk failure
         }
