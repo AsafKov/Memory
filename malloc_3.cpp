@@ -103,7 +103,6 @@ public:
         if (program_break == (void *) -1) {
             return nullptr;
         }
-
         auto *block = (MetaData *) program_break;
         block->next_by_address = nullptr;
         block->prev_by_address = nullptr;
@@ -125,7 +124,7 @@ public:
         if(block == head_by_size){
             head_by_size = block->next_by_size;
             if(head_by_size != nullptr){
-                head_by_size->prev_by_address = nullptr;
+                head_by_size->prev_by_size = nullptr;
             }
             block->next_by_size = nullptr;
         } else {
@@ -168,19 +167,27 @@ public:
         size_t old_size = block->size;
 
         MetaData *split_block = (MetaData *) ((char *)block + size + sizeof(MetaData));
+        split_block->prev_by_address = nullptr;
+        split_block->next_by_address = nullptr;
         split_block->size = old_size - size - sizeof(MetaData);
         split_block->is_free = true;
         split_block->prev_by_size = nullptr;
         split_block->prev_by_address = block;
         split_block->next_by_size = nullptr;
         split_block->next_by_address = block->next_by_address;
-
+        if(split_block->next_by_address != nullptr){
+            split_block->next_by_address->prev_by_address = split_block;
+        }
         if(!block->is_free){
             increaseFreeBytes(old_size - size);
         }
         block->next_by_address = split_block;
         block->is_free = false;
         block->size = size;
+
+        if(head_by_address == block){
+            head_by_address = split_block;
+        }
 
         if(split_block->next_by_address != nullptr && split_block->next_by_address->is_free){
             split_block = (MetaData *) mergeBlocks(split_block, split_block->next_by_address);
@@ -210,8 +217,9 @@ public:
         if(new_next != nullptr){
             new_next->prev_by_address = left_block;
         }
-        right_block->prev_by_address = nullptr;
-        right_block->next_by_address = nullptr;
+        if(! right_block->is_free){
+            memcpy((char *)left_block + sizeof(MetaData), (char *)right_block + sizeof(MetaData), right_block->size);
+        }
         removeFromSizeList(right_block);
         removeFromAddressList(right_block);
         return left_block;
@@ -258,36 +266,18 @@ public:
             return;
         }
         MetaData *curr_block = head_by_address;
-        if(block < curr_block){
-            block->next_by_address = curr_block;
-            curr_block->prev_by_address = block;
-            head_by_address = block;
-            return;
-        }
-
-        curr_block = head_by_address;
-        while(curr_block != nullptr){
-            if(block < curr_block){
-                curr_block->prev_by_address->next_by_address = block;
-                block->prev_by_address = curr_block->prev_by_address;
-                curr_block->prev_by_address = block;
-                block->next_by_address = curr_block;
-                return;
-            }
-            if(curr_block->next_by_address == nullptr) break;
+        while(curr_block->next_by_address != nullptr) {
             curr_block = curr_block->next_by_address;
         }
-
-        block->prev_by_address = curr_block;
-        block->next_by_address = nullptr;
         curr_block->next_by_address = block;
+        block->prev_by_address = curr_block;
     }
 };
 
 MemoryBlocks memory_blocks = MemoryBlocks();
 
 void split(MetaData *block, size_t size){
-    if(block->size >  size + sizeof(MetaData) + 128){
+    if(block->size >=  size + sizeof(MetaData) + 128 && block->size < 128*1024){
         memory_blocks.split(block, size);
     }
 }
@@ -318,7 +308,10 @@ size_t _size_meta_data() {
 
 
 void *smalloc(size_t size) {
-    size = size % 8 != 0? size + (8 - size % 8) : size;
+    if((long) sbrk(0) % 8 != 0){
+        sbrk(8 - (long) sbrk(0)%8);
+    }
+    size = size % 8 != 0? size + (8 - (size % 8)) : size;
 
     if(size == 0 || size > (size_t) pow(10, 8)) return nullptr;
 
@@ -330,8 +323,11 @@ void *smalloc(size_t size) {
 }
 
 void *scalloc(size_t num, size_t size) {
+    if((long) sbrk(0) % 8 != 0){
+        sbrk(8 - (long) sbrk(0)%8);
+    }
     size_t actual_size = num*size;
-    actual_size = actual_size % 8 != 0? actual_size + (8 - actual_size % 8) : actual_size;
+    size = actual_size % 8 != 0? actual_size + (8 - (size % 8)) : actual_size;
     void *program_break = smalloc(actual_size);
     if(program_break == nullptr)
         return nullptr;
@@ -363,7 +359,6 @@ void sfree(void *p) {
         if(block->next_by_address != nullptr && block->next_by_address->is_free){
             block = (MetaData *) memory_blocks.mergeBlocks(block, block->next_by_address);
         }
-
     }
 }
 
@@ -382,15 +377,13 @@ bool extendWilderness(MetaData *block, size_t extend_to){
 }
 
 void *srealloc(void *oldp, size_t size) {
-    size = size % 8 != 0? size + (8 - size % 8) : size;
     if(size == 0 || size > (size_t) pow(10, 8)) return nullptr;
     if(oldp == nullptr) return smalloc(size);
     MetaData *old_block = (MetaData* )((char *)oldp - sizeof(MetaData));
-    if(old_block->size >= size){
+    if(old_block->size >= size && old_block->size < 128*1024){
         split(old_block, size);
         return oldp;
     }
-
     bool is_wilderness, next_is_wilderness, prev_free, prev_fits, next_free, next_fits, combined_fits;
     is_wilderness = old_block->next_by_address == nullptr;
     prev_free = old_block->prev_by_address != nullptr && old_block->prev_by_address->is_free;
@@ -412,7 +405,6 @@ void *srealloc(void *oldp, size_t size) {
             return nullptr; //sbrk failure
         }
         if(new_block->size >= size){
-            memcpy(new_block, old_block, old_block->size);
             return (char *) new_block + sizeof(MetaData);
         }
         old_block = new_block;
@@ -423,7 +415,7 @@ void *srealloc(void *oldp, size_t size) {
         return nullptr; //sbrk failure
     } else {
         if(old_block->size == size){
-            return  (char *) old_block + sizeof(MetaData);
+            return (char *) old_block + sizeof(MetaData);
         }
     }
 
@@ -436,8 +428,8 @@ void *srealloc(void *oldp, size_t size) {
             return nullptr; //sbrk failure
         }
         if(new_block->size >= size){
-            memcpy(new_block, old_block, old_block->size);
-            return  (char *) new_block + sizeof(MetaData);
+            memcpy((char *) new_block + sizeof(MetaData), oldp, std::min(size, old_block->size));
+            return (char *) new_block + sizeof(MetaData);
         }
     }
 
@@ -445,7 +437,7 @@ void *srealloc(void *oldp, size_t size) {
     if(program_break == nullptr){
         //TODO: ???
     }
-    memcpy(program_break, old_block, old_block->size);
+    memcpy(program_break, oldp, std::min(size, old_block->size));
     sfree(oldp);
     return program_break;
 }

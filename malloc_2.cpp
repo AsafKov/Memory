@@ -116,10 +116,10 @@ void *srealloc(void *oldp, size_t size) {
     if(oldp == nullptr) return smalloc(size);
 
     MetaData *old_block = (MetaData* )((char *)oldp - sizeof(MetaData));
-    if(old_block->size > size) return old_block;
+    if(old_block->size >= size) return oldp;
 
     void *program_break = smalloc(size);
-    memcpy(program_break, old_block, old_block->size);
+    memcpy(program_break, oldp, old_block->size);
     sfree(oldp);
     return program_break;
 }
